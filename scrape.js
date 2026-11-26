@@ -13,7 +13,7 @@ const PLATFORMS = [
   { id: 'oapay', url: 'https://www.oapay.co/', steps: [
     { click: 'GHS', last: true, pick: /^(NGN|Nigeria)\b/ },
   ] },
-  { id: 'pesa', url: 'https://www.pesa.co/', invert: true, dump: 'By exchange rate', steps: [
+  { id: 'pesa', url: 'https://www.pesa.co/', invert: true, dump: 'By exchange rate', calc: { send: '#sendAmount', recv: '#receiveAmount', amount: 1000 }, steps: [
     { css: 'a.standard-btn' },
     { css: '#send-option', pickCss: '.send-options .option:has(.option-text:text-is("GBP"))' },
   ] },
@@ -120,6 +120,7 @@ async function readPlatform(browser, p) {
   page.on('pageerror', (e) => fs.appendFileSync(`debug/${p.id}.log`, `pageerror: ${String(e.message || e).slice(0, 200)}\n`));
   try {
     if (p.netlog) {
+      page.on('requestfailed', (r) => fs.appendFileSync(`debug/${p.id}-net.log`, `FAILED ${r.failure()?.errorText} ${r.url().slice(0, 160)}\n`));
       page.on('response', (r) => {
         const t = r.request().resourceType();
         if (t === 'xhr' || t === 'fetch') fs.appendFileSync(`debug/${p.id}-net.log`, `${r.status()} ${r.url()}\n`);
@@ -143,6 +144,17 @@ async function readPlatform(browser, p) {
     if (p.waitFor) {
       try { await page.waitForFunction((re) => new RegExp(re).test(document.body.innerText), p.waitFor, { timeout: 25000 }); } catch { /* read what is there */ }
     }
+    let calcRate = null;
+    if (p.calc) {
+      try {
+        await page.locator(p.calc.send).fill(String(p.calc.amount));
+        await page.waitForTimeout(3000);
+        const v = await page.locator(p.calc.recv).inputValue();
+        const r = num(v) / p.calc.amount;
+        fs.appendFileSync(`debug/${p.id}.log`, `calc: ${p.calc.amount} -> ${v}\n`);
+        if (r >= MIN && r <= MAX) calcRate = r;
+      } catch (e) { fs.appendFileSync(`debug/${p.id}.log`, `calc failed: ${String(e.message || e).split('\n')[0]}\n`); }
+    }
     let text = await page.evaluate(() => document.body.innerText);
     let inputRate = null;
     if (p.useInputs) {
@@ -153,7 +165,7 @@ async function readPlatform(browser, p) {
     }
     fs.writeFileSync(`debug/${p.id}.txt`, text);
     await page.screenshot({ path: `debug/${p.id}.png` });
-    const rate = findRate(text, p.invert) ?? inputRate;
+    const rate = calcRate ?? findRate(text, p.invert) ?? inputRate;
     if (!rate) return { ok: false, error: 'Could not find a £ to ₦ rate on the page' };
     return { ok: true, rate, fee: findFee(text) };
   } catch (e) {
