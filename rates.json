@@ -1,1 +1,39 @@
-{ "updatedAt": null, "platforms": {} }
+{
+  "updatedAt": "2026-11-26T21:41:27.488Z",
+  "platforms": {
+    "lemfi": {
+      "ok": false,
+      "error": "Could not find a £ to ₦ rate on the page",
+      "rate": null,
+      "fee": null,
+      "fetchedAt": null
+    },
+    "oapay": {
+      "ok": false,
+      "error": "Could not find a £ to ₦ rate on the page",
+      "rate": null,
+      "fee": null,
+      "fetchedAt": null
+    },
+    "pesa": {
+      "ok": false,
+      "error": "Could not find a £ to ₦ rate on the page",
+      "rate": null,
+      "fee": null,
+      "fetchedAt": null
+    },
+    "monieworld": {
+      "ok": false,
+      "error": "Could not find a £ to ₦ rate on the page",
+      "rate": null,
+      "fee": null,
+      "fetchedAt": null
+    },
+    "flutterwave": {
+      "ok": true,
+      "rate": 1866.041188,
+      "fee": null,
+      "fetchedAt": "2026-11-26T21:41:27.488Z"
+    }
+  }
+}
