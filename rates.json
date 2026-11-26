@@ -1,17 +1,17 @@
 {
-  "updatedAt": "2026-11-26T21:49:03.067Z",
+  "updatedAt": "2026-11-26T21:53:50.414Z",
   "platforms": {
     "lemfi": {
       "ok": true,
       "rate": 1850,
       "fee": 0,
-      "fetchedAt": "2026-11-26T21:49:03.067Z"
+      "fetchedAt": "2026-11-26T21:53:50.414Z"
     },
     "oapay": {
       "ok": true,
       "rate": 1870,
-      "fee": null,
-      "fetchedAt": "2026-11-26T21:49:03.067Z"
+      "fee": 0,
+      "fetchedAt": "2026-11-26T21:53:50.414Z"
     },
     "pesa": {
       "ok": false,
@@ -31,7 +31,7 @@
       "ok": true,
       "rate": 1866.041188,
       "fee": 0,
-      "fetchedAt": "2026-11-26T21:49:03.067Z"
+      "fetchedAt": "2026-11-26T21:53:50.414Z"
     }
   }
 }
