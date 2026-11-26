@@ -14,9 +14,10 @@ const PLATFORMS = [
     { click: 'GHS', last: true, pick: /^(NGN|Nigeria)\b/ },
   ] },
   { id: 'pesa', url: 'https://www.pesa.co/', invert: true, steps: [
-    { click: 'CAD', last: true, pick: /^(GBP|United Kingdom)\b/ },
+    { click: 'Standard' },
+    { click: 'CAD', last: true, pick: [/^GBP\b/, /^(United Kingdom|British Pound)/] },
   ] },
-  { id: 'monieworld', url: 'http://monieworld.com/', steps: [] },
+  { id: 'monieworld', url: 'https://monieworld.com/', steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
   { id: 'flutterwave', url: 'https://send.flutterwave.com/', steps: [] },
 ];
 
@@ -28,7 +29,7 @@ function findRate(text, invert) {
   const t = text.replace(/\s+/g, ' ');
   const patterns = [
     /1\s*GBP\s*=\s*([\d,]+(?:\.\d+)?)\s*NGN/i,
-    /£\s*1\s*=\s*₦\s*([\d,]+(?:\.\d+)?)/,
+    /£\s*1\s*=\s*₦\s*([\d,]+(?:\.\d+)?)(?:\s*₦\s*([\d,]+(?:\.\d+)?))?/,
     /GBP\s*1\s*=\s*NGN\s*([\d,]+(?:\.\d+)?)/i,
     /1\s*GBP\s*[=≈~:]\s*₦\s*([\d,]+(?:\.\d+)?)/i,
     /NGN\s*([\d,]+(?:\.\d+)?)\s*\/\s*(?:1\s*)?GBP/i,
@@ -37,6 +38,8 @@ function findRate(text, invert) {
     const m = t.match(p);
     if (!m) continue;
     let v = num(m[1]);
+    // Some sites show a boosted rate then the struck-through standard rate ("£1 = ₦1,848 ₦1,840"): use the standard one.
+    if (m[2]) { const std = num(m[2]); if (std >= MIN && std <= MAX) return std; }
     if (invert && v > 0 && v < 0.05) v = 1 / v;
     if (v >= MIN && v <= MAX) return v;
   }
@@ -46,7 +49,7 @@ function findRate(text, invert) {
 // Looks for "Fee £1.99", "Transactions fee $0.00" or "Fee FREE"; null if not found.
 function findFee(text) {
   const t = text.replace(/\s+/g, ' ');
-  if (/fees?\s*:?\s*free\b/i.test(t) || /(no|zero|0)\s*(transfer\s*)?fees?\b/i.test(t)) return 0;
+  if (/fees?\s*:?\s*free\b/i.test(t) || /(no|zero|0)\s*(transfer\s*)?fees?\b/i.test(t) || /no charges/i.test(t)) return 0;
   const m = t.match(/fees?[^£$\d]{0,25}[£$]\s*([\d.]+)/i) || t.match(/[£$]\s*([\d.]+)\s*(?:transfer\s*)?fee/i);
   if (m) { const v = num(m[1]); if (v >= 0 && v < 50) return v; }
   return null;
@@ -65,10 +68,17 @@ async function runSteps(page, p) {
     try {
       let loc = page.getByText(s.click, { exact: true }).locator('visible=true');
       loc = s.last ? loc.last() : loc.first();
-      await loc.click({ timeout: 5000 });
+      await loc.click({ timeout: 5000, force: true });
       await page.waitForTimeout(700);
       await page.screenshot({ path: `debug/${p.id}-step${i}-menu.png` });
-      await page.getByText(s.pick).locator('visible=true').first().click({ timeout: 5000 });
+      const picks = s.pick ? [].concat(s.pick) : [];
+      if (picks.length) {
+        let done = false;
+        for (const pk of picks) {
+          try { await page.getByText(pk).locator('visible=true').first().click({ timeout: 4000, force: true }); done = true; break; } catch { /* try next option */ }
+        }
+        if (!done) throw new Error('no menu option matched');
+      }
       await page.waitForTimeout(1500);
     } catch (e) {
       fs.appendFileSync(`debug/${p.id}.log`, `step ${i} (${s.click}): ${String(e.message || e).split('\n')[0]}\n`);
@@ -89,10 +99,20 @@ async function readPlatform(browser, p) {
     await page.waitForTimeout(2500);
     await dismissCookies(page);
     await runSteps(page, p);
-    const text = await page.evaluate(() => document.body.innerText);
+    if (p.waitFor) {
+      try { await page.waitForFunction((re) => new RegExp(re).test(document.body.innerText), p.waitFor, { timeout: 15000 }); } catch { /* read what is there */ }
+    }
+    let text = await page.evaluate(() => document.body.innerText);
+    let inputRate = null;
+    if (p.useInputs) {
+      const vals = await page.$$eval('input', (els) => els.map((e) => e.value));
+      fs.appendFileSync(`debug/${p.id}.log`, `inputs: ${JSON.stringify(vals)}\n`);
+      const nums = vals.map((v) => parseFloat(String(v).replace(/,/g, ''))).filter((n) => isFinite(n) && n > 0);
+      if (nums.length >= 2 && nums[1] / nums[0] >= MIN && nums[1] / nums[0] <= MAX) inputRate = nums[1] / nums[0];
+    }
     fs.writeFileSync(`debug/${p.id}.txt`, text);
     await page.screenshot({ path: `debug/${p.id}.png` });
-    const rate = findRate(text, p.invert);
+    const rate = findRate(text, p.invert) ?? inputRate;
     if (!rate) return { ok: false, error: 'Could not find a £ to ₦ rate on the page' };
     return { ok: true, rate, fee: findFee(text) };
   } catch (e) {
