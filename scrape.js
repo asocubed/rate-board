@@ -14,10 +14,10 @@ const PLATFORMS = [
     { click: 'GHS', last: true, pick: /^(NGN|Nigeria)\b/ },
   ] },
   { id: 'pesa', url: 'https://www.pesa.co/', invert: true, dump: 'By exchange rate', steps: [
-    { click: 'Standard' },
-    { click: 'CAD', last: true, pick: [/^GBP\b/, /^(United Kingdom|British Pound)/] },
+    { css: 'a.standard-btn' },
+    { css: '#send-option', pickCss: '.send-options .option:has(.option-text:text-is("GBP"))' },
   ] },
-  { id: 'monieworld', url: 'https://monieworld.com/', netlog: true, steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
+  { id: 'monieworld', url: 'https://monieworld.com/', netlog: true, uk: true, steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
   { id: 'flutterwave', url: 'https://send.flutterwave.com/', steps: [] },
 ];
 
@@ -65,15 +65,20 @@ async function runSteps(page, p) {
   let i = 0;
   for (const s of p.steps) {
     i++;
+    const label = s.css || s.click;
     try {
-      let loc = page.getByText(s.click, { exact: true }).locator('visible=true');
-      loc = s.last ? loc.last() : loc.first();
+      let loc = s.css
+        ? page.locator(s.css).locator('visible=true').first()
+        : page.getByText(s.click, { exact: true }).locator('visible=true');
+      if (!s.css) loc = s.last ? loc.last() : loc.first();
       const picks = s.pick ? [].concat(s.pick) : [];
+      const hasPick = !!s.pickCss || picks.length > 0;
       const menuOpen = async () => {
+        if (s.pickCss) return (await page.locator(s.pickCss).locator('visible=true').count()) > 0 ? s.pickCss : null;
         for (const pk of picks) if (await page.getByText(pk).locator('visible=true').count() > 0) return pk;
         return null;
       };
-      // Different sites open their menus on different events, so try several ways of "clicking" until the options appear.
+      // Different sites open menus on different events, so try several ways of "clicking" until the options appear.
       const tries = [
         () => loc.click({ timeout: 5000, force: true }),
         async () => { const b = await loc.boundingBox(); await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); },
@@ -85,18 +90,19 @@ async function runSteps(page, p) {
       for (let n = 0; n < tries.length; n++) {
         try { await tries[n](); } catch { continue; }
         await page.waitForTimeout(800);
-        if (!picks.length) break;
+        if (!hasPick) break;
         pk = await menuOpen();
         if (pk) break;
       }
       await page.screenshot({ path: `debug/${p.id}-step${i}-menu.png` });
-      if (picks.length) {
+      if (hasPick) {
         if (!pk) throw new Error('menu did not open or no option matched');
-        await page.getByText(pk).locator('visible=true').first().click({ timeout: 4000, force: true });
+        const target = s.pickCss ? page.locator(s.pickCss).locator('visible=true').first() : page.getByText(pk).locator('visible=true').first();
+        try { await target.click({ timeout: 4000, force: true }); } catch { await target.dispatchEvent('click'); }
       }
       await page.waitForTimeout(1500);
     } catch (e) {
-      fs.appendFileSync(`debug/${p.id}.log`, `step ${i} (${s.click}): ${String(e.message || e).split('\n')[0]}\n`);
+      fs.appendFileSync(`debug/${p.id}.log`, `step ${i} (${label}): ${String(e.message || e).split('\n')[0]}\n`);
     }
   }
 }
@@ -105,10 +111,13 @@ async function readPlatform(browser, p) {
   const ctx = await browser.newContext({
     locale: 'en-GB',
     timezoneId: 'Europe/London',
+    ...(p.uk ? { geolocation: { latitude: 51.5074, longitude: -0.1278 }, permissions: ['geolocation'] } : {}),
     viewport: { width: 1280, height: 900 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
   });
   const page = await ctx.newPage();
+  await page.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => false }); });
+  page.on('pageerror', (e) => fs.appendFileSync(`debug/${p.id}.log`, `pageerror: ${String(e.message || e).slice(0, 200)}\n`));
   try {
     if (p.netlog) {
       page.on('response', (r) => {
@@ -132,7 +141,7 @@ async function readPlatform(browser, p) {
     }
     await runSteps(page, p);
     if (p.waitFor) {
-      try { await page.waitForFunction((re) => new RegExp(re).test(document.body.innerText), p.waitFor, { timeout: 15000 }); } catch { /* read what is there */ }
+      try { await page.waitForFunction((re) => new RegExp(re).test(document.body.innerText), p.waitFor, { timeout: 25000 }); } catch { /* read what is there */ }
     }
     let text = await page.evaluate(() => document.body.innerText);
     let inputRate = null;
@@ -158,7 +167,7 @@ fs.mkdirSync('debug', { recursive: true });
 let previous = {};
 try { previous = JSON.parse(fs.readFileSync('rates.json', 'utf8')).platforms || {}; } catch { /* first run */ }
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ['--disable-blink-features=AutomationControlled'] });
 const now = new Date().toISOString();
 const platforms = {};
 for (const p of PLATFORMS) {
