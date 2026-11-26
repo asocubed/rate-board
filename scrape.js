@@ -13,11 +13,11 @@ const PLATFORMS = [
   { id: 'oapay', url: 'https://www.oapay.co/', steps: [
     { click: 'GHS', last: true, pick: /^(NGN|Nigeria)\b/ },
   ] },
-  { id: 'pesa', url: 'https://www.pesa.co/', invert: true, steps: [
+  { id: 'pesa', url: 'https://www.pesa.co/', invert: true, dump: 'By exchange rate', steps: [
     { click: 'Standard' },
     { click: 'CAD', last: true, pick: [/^GBP\b/, /^(United Kingdom|British Pound)/] },
   ] },
-  { id: 'monieworld', url: 'https://monieworld.com/', steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
+  { id: 'monieworld', url: 'https://monieworld.com/', netlog: true, steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
   { id: 'flutterwave', url: 'https://send.flutterwave.com/', steps: [] },
 ];
 
@@ -68,16 +68,31 @@ async function runSteps(page, p) {
     try {
       let loc = page.getByText(s.click, { exact: true }).locator('visible=true');
       loc = s.last ? loc.last() : loc.first();
-      await loc.click({ timeout: 5000, force: true });
-      await page.waitForTimeout(700);
-      await page.screenshot({ path: `debug/${p.id}-step${i}-menu.png` });
       const picks = s.pick ? [].concat(s.pick) : [];
+      const menuOpen = async () => {
+        for (const pk of picks) if (await page.getByText(pk).locator('visible=true').count() > 0) return pk;
+        return null;
+      };
+      // Different sites open their menus on different events, so try several ways of "clicking" until the options appear.
+      const tries = [
+        () => loc.click({ timeout: 5000, force: true }),
+        async () => { const b = await loc.boundingBox(); await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); },
+        async () => { const b = await loc.boundingBox(); await page.mouse.click(b.x + b.width + 16, b.y + b.height / 2); },
+        () => loc.dispatchEvent('click'),
+        async () => { await loc.focus(); await page.keyboard.press('Enter'); },
+      ];
+      let pk = null;
+      for (let n = 0; n < tries.length; n++) {
+        try { await tries[n](); } catch { continue; }
+        await page.waitForTimeout(800);
+        if (!picks.length) break;
+        pk = await menuOpen();
+        if (pk) break;
+      }
+      await page.screenshot({ path: `debug/${p.id}-step${i}-menu.png` });
       if (picks.length) {
-        let done = false;
-        for (const pk of picks) {
-          try { await page.getByText(pk).locator('visible=true').first().click({ timeout: 4000, force: true }); done = true; break; } catch { /* try next option */ }
-        }
-        if (!done) throw new Error('no menu option matched');
+        if (!pk) throw new Error('menu did not open or no option matched');
+        await page.getByText(pk).locator('visible=true').first().click({ timeout: 4000, force: true });
       }
       await page.waitForTimeout(1500);
     } catch (e) {
@@ -95,9 +110,26 @@ async function readPlatform(browser, p) {
   });
   const page = await ctx.newPage();
   try {
+    if (p.netlog) {
+      page.on('response', (r) => {
+        const t = r.request().resourceType();
+        if (t === 'xhr' || t === 'fetch') fs.appendFileSync(`debug/${p.id}-net.log`, `${r.status()} ${r.url()}\n`);
+      });
+    }
     await page.goto(p.url, { waitUntil: 'networkidle', timeout: 45000 });
     await page.waitForTimeout(2500);
     await dismissCookies(page);
+    if (p.dump) {
+      try {
+        const html = await page.evaluate((t) => {
+          const el = [...document.querySelectorAll('*')].find((e) => e.children.length === 0 && e.textContent.includes(t));
+          if (!el) return '';
+          let e = el; for (let i = 0; i < 6 && e.parentElement; i++) e = e.parentElement;
+          return e.outerHTML.slice(0, 30000);
+        }, p.dump);
+        fs.writeFileSync(`debug/${p.id}-dom.html`, html);
+      } catch { /* optional */ }
+    }
     await runSteps(page, p);
     if (p.waitFor) {
       try { await page.waitForFunction((re) => new RegExp(re).test(document.body.innerText), p.waitFor, { timeout: 15000 }); } catch { /* read what is there */ }
