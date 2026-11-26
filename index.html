@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>£ to ₦ rate board</title>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6f7f3;--card:#fff;--ink:#13201a;--mute:#5f6d65;--line:#dfe4dc;--green:#0b7a47;--greenbg:#e3f3ea;--warn:#8a5a00;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root{--bg:#101712;--card:#18221b;--ink:#eaf0ea;--mute:#9aa99f;--line:#2a372e;--green:#4cc88a;--greenbg:#173626;--warn:#e0b04a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Schibsted Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.45}
+main{max-width:720px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:clamp(28px,6vw,40px);font-weight:800;letter-spacing:-.02em;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 20px}
+h2{font-size:18px;margin:32px 0 4px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.seg{display:flex;gap:4px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px;margin-bottom:12px}
+.seg button{flex:1;border:0;background:none;color:var(--mute);font:inherit;font-weight:600;padding:8px;border-radius:8px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--green);color:#fff}
+label{display:block;font-size:13px;color:var(--mute);margin-bottom:4px}
+.field{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:0 12px}
+.field span{font-weight:800;font-size:22px;color:var(--mute)}
+input{font:inherit;color:var(--ink);background:none;border:0;outline:0;width:100%;padding:10px 8px;min-width:0}
+.field:focus-within{outline:2px solid var(--green)}
+#amount{font-size:26px;font-weight:800}
+.list{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:12px}
+.row{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row.best{background:var(--greenbg)}
+.name{font-weight:800;font-size:18px}
+.name a{color:inherit;text-decoration:none;border-bottom:1px solid var(--line)}
+.badge{font-size:12px;font-weight:800;background:var(--green);color:#fff;border-radius:99px;padding:2px 8px;margin-left:8px;vertical-align:2px}
+.big{font-size:22px;font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
+.meta{color:var(--mute);font-size:13px}
+.meta.r{text-align:right}
+.warn{color:var(--warn)}
+.empty{padding:16px;color:var(--mute)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.grid:first-child{padding-top:0}.grid:last-child{border-bottom:0;padding-bottom:0}
+.pname{grid-column:1/-1;display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.pname a{font-weight:800;color:inherit}
+.note{font-size:13px;color:var(--mute);margin:8px 0 0}
+</style>
+</head>
+<body>
+<main>
+<h1>£ to ₦ rate board</h1>
+<p class="sub" id="status">Loading rates…</p>
+
+<div class="panel">
+  <div class="seg" role="group" aria-label="Conversion direction">
+    <button id="m-gbp" aria-pressed="true">I pay in £</button>
+    <button id="m-ngn" aria-pressed="false">They receive in ₦</button>
+  </div>
+  <label for="amount" id="amount-label">Amount you pay (£), fee included</label>
+  <div class="field"><span id="cur">£</span><input id="amount" inputmode="decimal" value="500" autocomplete="off"></div>
+</div>
+
+<h2>Best rate first</h2>
+<div class="list" id="results"></div>
+<p class="note" id="basis"></p>
+
+<h2>Rates and fees</h2>
+<p class="sub" style="margin-bottom:8px">Rates fill in automatically. Fees are saved on this device. If a rate couldn’t be read, or you want to test a different one, type it in the rate box.</p>
+<div class="panel" id="inputs"></div>
+</main>
+
+<script>
+const P=[
+{id:'lemfi',name:'LemFi',url:'https://lemfi.com'},
+{id:'oapay',name:'OAPay',url:'https://www.oapay.co/'},
+{id:'pesa',name:'Pesa',url:'https://www.pesa.co/'},
+{id:'monieworld',name:'MonieWorld',url:'http://monieworld.com/'},
+{id:'flutterwave',name:'Flutterwave Send',url:'https://send.flutterwave.com/'}];
+const KEY='gbp-ngn-local-v1',STALE_MS=3*3600*1000;
+let auto={},local={},mode='gbp',updatedAt=null;
+try{local=JSON.parse(localStorage.getItem(KEY)||'{}')||{}}catch(e){local={}}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(local))}catch(e){}};
+const num=v=>{const n=parseFloat(String(v).replace(/,/g,''));return isFinite(n)&&n>=0?n:null};
+const fmt=(n,d=2)=>n.toLocaleString('en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
+const ago=ts=>{if(!ts)return'never';const m=Math.round((Date.now()-new Date(ts))/60000);if(m<1)return'just now';if(m<60)return m+' min ago';const h=Math.round(m/60);return h<24?h+' h ago':Math.round(h/24)+' d ago'};
+const isStale=a=>!a||!a.fetchedAt||Date.now()-new Date(a.fetchedAt)>STALE_MS;
+
+const inputs=document.getElementById('inputs');
+inputs.innerHTML=P.map(p=>`<div class="grid">
+<div class="pname"><a href="${p.url}" target="_blank" rel="noopener">${p.name}</a><span class="meta" id="st-${p.id}"></span></div>
+<div><label for="r-${p.id}">Rate: £1 = ₦</label><div class="field"><span>₦</span><input id="r-${p.id}" data-id="${p.id}" data-k="rate" inputmode="decimal" placeholder="auto" autocomplete="off"></div></div>
+<div><label for="f-${p.id}">Transfer fee (£)</label><div class="field"><span>£</span><input id="f-${p.id}" data-id="${p.id}" data-k="fee" inputmode="decimal" placeholder="0.00" autocomplete="off"></div></div>
+</div>`).join('');
+P.forEach(p=>{const d=local[p.id]||{};document.getElementById('r-'+p.id).value=d.rate??'';document.getElementById('f-'+p.id).value=d.fee??''});
+inputs.addEventListener('input',e=>{const t=e.target;if(!t.dataset.id)return;(local[t.dataset.id]=local[t.dataset.id]||{})[t.dataset.k]=t.value;save();render()});
+
+const amt=document.getElementById('amount');
+amt.addEventListener('input',render);
+function setMode(m){mode=m;
+  document.getElementById('m-gbp').setAttribute('aria-pressed',m==='gbp');
+  document.getElementById('m-ngn').setAttribute('aria-pressed',m==='ngn');
+  document.getElementById('cur').textContent=m==='gbp'?'£':'₦';
+  document.getElementById('amount-label').textContent=m==='gbp'?'Amount you pay (£), fee included':'Amount they receive (₦)';
+  amt.value=m==='gbp'?'500':'500000';render()}
+document.getElementById('m-gbp').onclick=()=>setMode('gbp');
+document.getElementById('m-ngn').onclick=()=>setMode('ngn');
+
+function effective(p){
+  const a=auto[p.id]||{},l=local[p.id]||{};
+  const manual=num(l.rate);
+  const rate=manual>0?manual:(a.rate||null);
+  const fee=num(l.fee)!==null&&String(l.fee).trim()!==''?num(l.fee):(a.fee??0);
+  return{rate,fee,manual:manual>0,a};
+}
+
+function render(){
+  const a=num(amt.value),rows=[],missing=[];
+  P.forEach(p=>{
+    const e=effective(p);
+    const st=document.getElementById('st-'+p.id);
+    if(e.manual){st.textContent='Using your typed rate';st.className='meta'}
+    else if(e.a.rate){const s=isStale(e.a)||!e.a.ok;st.textContent=(s?'Out of date · ':'')+'Auto rate ₦'+fmt(e.a.rate)+', '+ago(e.a.fetchedAt);st.className='meta'+(s?' warn':'')}
+    else{st.textContent='Couldn’t read automatically. Type the rate.';st.className='meta warn'}
+    if(!e.rate){missing.push(p);return}
+    const stale=!e.manual&&(isStale(e.a)||!e.a.ok);
+    rows.push({p,rate:e.rate,fee:e.fee,stale,value:a===null?null:(mode==='gbp'?Math.max(a-e.fee,0)*e.rate:a/e.rate+e.fee)});
+  });
+  if(a!==null)rows.sort((x,y)=>mode==='gbp'?y.value-x.value:x.value-y.value);else rows.sort((x,y)=>y.rate-x.rate);
+  const best=rows.length&&a!==null?rows[0].value:null;
+  const el=document.getElementById('results');
+  el.innerHTML=!rows.length?'<div class="empty">No rates yet. Wait for the next update or type a rate below.</div>':
+    rows.map((r,i)=>{
+      let main='—',sub='';
+      if(a!==null){main=mode==='gbp'?'₦'+fmt(r.value):'£'+fmt(r.value);
+        if(i>0&&best!==null){const d=Math.abs(r.value-best);sub=mode==='gbp'?'₦'+fmt(d)+' less than best':'£'+fmt(d)+' more than best'}}
+      return `<div class="row${i===0?' best':''}">
+<div class="name"><a href="${r.p.url}" target="_blank" rel="noopener">${r.p.name}</a>${i===0&&rows.length>1?'<span class="badge">Best</span>':''}</div>
+<div class="big">${main}</div>
+<div class="meta${r.stale?' warn':''}">£1 = ₦${fmt(r.rate)} · fee £${fmt(r.fee)}${r.stale?' · rate may be out of date':''}</div>
+<div class="meta r">${sub}</div></div>`}).join('')
+    +(missing.length?`<div class="row"><div class="meta warn">No rate: ${missing.map(m=>m.name).join(', ')}</div></div>`:'');
+  document.getElementById('basis').textContent=mode==='gbp'?'Naira received = (amount paid − fee) × rate.':'Pounds to pay = naira ÷ rate + fee.';
+  document.getElementById('status').textContent=updatedAt?'Rates last checked '+ago(updatedAt)+'. Best deal first.':'Waiting for the first automatic rate check.';
+}
+
+async function load(){
+  try{
+    const r=await fetch('rates.json?t='+Date.now(),{cache:'no-store'});
+    const j=await r.json();auto=j.platforms||{};updatedAt=j.updatedAt;
+  }catch(e){auto={};updatedAt=null}
+  render();
+}
+load();setInterval(load,5*60*1000);
+</script>
+</body>
+</html>
