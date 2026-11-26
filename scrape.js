@@ -17,7 +17,7 @@ const PLATFORMS = [
     { css: 'a.standard-btn' },
     { css: '#send-option', pickCss: '.send-options .option:has(.option-text:text-is("GBP"))' },
   ] },
-  { id: 'monieworld', url: 'https://monieworld.com/', netlog: true, uk: true, steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
+  { id: 'monieworld', url: 'https://monieworld.com/', netlog: true, uk: true, api: 'https://fx-apis.moniepoint.com/marketing/api/v1/fx-rates?sourceCurrency=GBP&targetCurrency=NGN', steps: [], waitFor: '£\\s*1\\s*=', useInputs: true },
   { id: 'flutterwave', url: 'https://send.flutterwave.com/', steps: [] },
 ];
 
@@ -107,7 +107,32 @@ async function runSteps(page, p) {
   }
 }
 
+// Some sites load their rate from a public JSON address. Asking for it directly is quicker and sturdier than driving the page.
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+async function readApi(p) {
+  const origin = new URL(p.url).origin;
+  const res = await fetch(p.api, {
+    headers: { accept: 'application/json', origin, referer: origin + '/', 'user-agent': UA, 'accept-language': 'en-GB,en;q=0.9' },
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = await res.text();
+  fs.writeFileSync(`debug/${p.id}-api.txt`, `HTTP ${res.status}\n${body.slice(0, 3000)}`);
+  if (!res.ok) return null;
+  const found = [];
+  (function walk(v, k) {
+    if (v && typeof v === 'object') { for (const [kk, vv] of Object.entries(v)) walk(vv, kk); }
+    else if (typeof v === 'number' || typeof v === 'string') { const n = num(v); if (isFinite(n) && n >= MIN && n <= MAX) found.push([k, n]); }
+  })(JSON.parse(body), '');
+  fs.appendFileSync(`debug/${p.id}.log`, `api candidates: ${JSON.stringify(found)}\n`);
+  const pick = found.find(([k]) => /^(rate|exchange_?rate|fx_?rate)$/i.test(k)) || found[0];
+  return pick ? pick[1] : null;
+}
+
 async function readPlatform(browser, p) {
+  if (p.api) {
+    try { const r = await readApi(p); if (r) return { ok: true, rate: r, fee: 0 }; }
+    catch (e) { fs.appendFileSync(`debug/${p.id}.log`, `api failed: ${String(e.message || e).split('\n')[0]}\n`); }
+  }
   const ctx = await browser.newContext({
     locale: 'en-GB',
     timezoneId: 'Europe/London',
