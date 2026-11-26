@@ -3,20 +3,28 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 
-// "from" is the destination currency the site shows by default, so the script can switch it to NGN.
+// steps: things to click, in order, to get the calculator onto £ -> ₦. Each step is optional (failures are ignored).
+// click: text to click (exact match). last: use the last match on the page. pick: option to choose from the menu that opens.
 const PLATFORMS = [
-  { id: 'lemfi', url: 'https://lemfi.com', from: 'INR' },
-  { id: 'oapay', url: 'https://www.oapay.co/', from: 'GHS' },
-  { id: 'pesa', url: 'https://www.pesa.co/', from: null },
-  { id: 'monieworld', url: 'http://monieworld.com/', from: null },
-  { id: 'flutterwave', url: 'https://send.flutterwave.com/', from: null },
+  { id: 'lemfi', url: 'https://lemfi.com', steps: [
+    { click: 'USD', pick: /^GBP\b/ },
+    { click: 'INR', pick: /^(NGN|Nigeria)\b/ },
+  ] },
+  { id: 'oapay', url: 'https://www.oapay.co/', steps: [
+    { click: 'GHS', last: true, pick: /^(NGN|Nigeria)\b/ },
+  ] },
+  { id: 'pesa', url: 'https://www.pesa.co/', invert: true, steps: [
+    { click: 'CAD', last: true, pick: /^(GBP|United Kingdom)\b/ },
+  ] },
+  { id: 'monieworld', url: 'http://monieworld.com/', steps: [] },
+  { id: 'flutterwave', url: 'https://send.flutterwave.com/', steps: [] },
 ];
 
 const MIN = 300, MAX = 10000; // sanity range for ₦ per £1; anything else is treated as a misread
 const num = (s) => parseFloat(String(s).replace(/,/g, ''));
 
-// Looks for patterns such as "1 GBP = 1,950.25 NGN" or "£1 = ₦1,950.25".
-function findRate(text) {
+// Looks for "1 GBP = 1,950.25 NGN" or "£1 = ₦1,950.25". With invert, a tiny value (₦1 expressed in £) is flipped.
+function findRate(text, invert) {
   const t = text.replace(/\s+/g, ' ');
   const patterns = [
     /1\s*GBP\s*=\s*([\d,]+(?:\.\d+)?)\s*NGN/i,
@@ -27,33 +35,51 @@ function findRate(text) {
   ];
   for (const p of patterns) {
     const m = t.match(p);
-    if (m) { const v = num(m[1]); if (v >= MIN && v <= MAX) return v; }
+    if (!m) continue;
+    let v = num(m[1]);
+    if (invert && v > 0 && v < 0.05) v = 1 / v;
+    if (v >= MIN && v <= MAX) return v;
   }
   return null;
 }
 
-// Looks for "fee £1.99" or "Fee: £0.00"; returns null if not found (the page then lets you type it in).
+// Looks for "Fee £1.99", "Transactions fee $0.00" or "Fee FREE"; null if not found.
 function findFee(text) {
   const t = text.replace(/\s+/g, ' ');
-  const m = t.match(/fee[^£\d]{0,20}£\s*([\d.]+)/i) || t.match(/£\s*([\d.]+)\s*(?:transfer\s*)?fee/i);
+  if (/fees?\s*:?\s*free\b/i.test(t) || /(no|zero|0)\s*(transfer\s*)?fees?\b/i.test(t)) return 0;
+  const m = t.match(/fees?[^£$\d]{0,25}[£$]\s*([\d.]+)/i) || t.match(/[£$]\s*([\d.]+)\s*(?:transfer\s*)?fee/i);
   if (m) { const v = num(m[1]); if (v >= 0 && v < 50) return v; }
-  if (/no fees?|zero fees?|free transfer|0 fee/i.test(t)) return 0;
   return null;
 }
 
-// Best effort: switch the destination currency to NGN. Selectors differ per site, so every step is optional.
-async function switchToNaira(page, from) {
-  const steps = [];
-  if (from) steps.push(page.getByText(from, { exact: true }).first());
-  steps.push(page.getByText(/^(NGN|Nigeria|Nigerian Naira)$/i).first());
-  for (const loc of steps) {
-    try { await loc.click({ timeout: 4000 }); await page.waitForTimeout(800); } catch { /* try next */ }
+async function dismissCookies(page) {
+  for (const name of [/reject non-essential/i, /necessary only/i, /accept all/i, /^accept$/i, /^got it$/i]) {
+    try { await page.getByRole('button', { name }).first().click({ timeout: 1500 }); await page.waitForTimeout(500); return; } catch { /* next */ }
+  }
+}
+
+async function runSteps(page, p) {
+  let i = 0;
+  for (const s of p.steps) {
+    i++;
+    try {
+      let loc = page.getByText(s.click, { exact: true }).locator('visible=true');
+      loc = s.last ? loc.last() : loc.first();
+      await loc.click({ timeout: 5000 });
+      await page.waitForTimeout(700);
+      await page.screenshot({ path: `debug/${p.id}-step${i}-menu.png` });
+      await page.getByText(s.pick).locator('visible=true').first().click({ timeout: 5000 });
+      await page.waitForTimeout(1500);
+    } catch (e) {
+      fs.appendFileSync(`debug/${p.id}.log`, `step ${i} (${s.click}): ${String(e.message || e).split('\n')[0]}\n`);
+    }
   }
 }
 
 async function readPlatform(browser, p) {
   const ctx = await browser.newContext({
     locale: 'en-GB',
+    timezoneId: 'Europe/London',
     viewport: { width: 1280, height: 900 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
   });
@@ -61,11 +87,12 @@ async function readPlatform(browser, p) {
   try {
     await page.goto(p.url, { waitUntil: 'networkidle', timeout: 45000 });
     await page.waitForTimeout(2500);
-    await switchToNaira(page, p.from);
+    await dismissCookies(page);
+    await runSteps(page, p);
     const text = await page.evaluate(() => document.body.innerText);
     fs.writeFileSync(`debug/${p.id}.txt`, text);
-    await page.screenshot({ path: `debug/${p.id}.png`, fullPage: false });
-    const rate = findRate(text);
+    await page.screenshot({ path: `debug/${p.id}.png` });
+    const rate = findRate(text, p.invert);
     if (!rate) return { ok: false, error: 'Could not find a £ to ₦ rate on the page' };
     return { ok: true, rate, fee: findFee(text) };
   } catch (e) {
