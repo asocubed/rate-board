@@ -1,23 +1,23 @@
 {
-  "updatedAt": "2026-11-26T22:17:27.898Z",
+  "updatedAt": "2026-11-27T03:57:21.997Z",
   "platforms": {
     "lemfi": {
       "ok": true,
       "rate": 1850,
       "fee": 0,
-      "fetchedAt": "2026-11-26T22:17:27.898Z"
+      "fetchedAt": "2026-11-27T03:57:21.997Z"
     },
     "oapay": {
       "ok": true,
       "rate": 1870,
       "fee": 0,
-      "fetchedAt": "2026-11-26T22:17:27.898Z"
+      "fetchedAt": "2026-11-27T03:57:21.997Z"
     },
     "pesa": {
       "ok": true,
       "rate": 1871,
       "fee": 0,
-      "fetchedAt": "2026-11-26T22:17:27.898Z"
+      "fetchedAt": "2026-11-27T03:57:21.997Z"
     },
     "monieworld": {
       "ok": false,
@@ -30,7 +30,7 @@
       "ok": true,
       "rate": 1866.041188,
       "fee": 0,
-      "fetchedAt": "2026-11-26T22:17:27.898Z"
+      "fetchedAt": "2026-11-27T03:57:21.997Z"
     }
   }
 }
